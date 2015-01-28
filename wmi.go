@@ -179,24 +179,17 @@ func (e *ErrFieldMismatch) Error() string {
 
 var timeType = reflect.TypeOf(time.Time{})
 
-// resolveValue returns an allocated Value of v's type if isPtr is true otherwise just returns v
-func resolveValue(v reflect.Value, isPtr bool) reflect.Value {
-	if !isPtr {
-		return v
-	}
-
-	ptr := reflect.New(v.Type().Elem())
-	v.Set(ptr)
-
-	return v.Elem()
-}
-
 // loadEntity loads a SWbemObject into a struct pointer.
 func loadEntity(dst interface{}, src *ole.IDispatch) (errFieldMismatch error) {
 	v := reflect.ValueOf(dst).Elem()
 	for i := 0; i < v.NumField(); i++ {
 		f := v.Field(i)
 		isPtr := f.Kind() == reflect.Ptr
+		if isPtr {
+			ptr := reflect.New(f.Type().Elem())
+			f.Set(ptr)
+			f = f.Elem()
+		}
 		n := v.Type().Field(i).Name
 		if !f.CanSet() {
 			return &ErrFieldMismatch{
@@ -227,12 +220,11 @@ func loadEntity(dst interface{}, src *ole.IDispatch) (errFieldMismatch error) {
 			default:
 				panic("unexpected type")
 			}
-			i := resolveValue(f, isPtr)
-			switch i.Kind() {
+			switch f.Kind() {
 			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-				i.SetInt(v)
+				f.SetInt(v)
 			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-				i.SetUint(uint64(v))
+				f.SetUint(uint64(v))
 			default:
 				return &ErrFieldMismatch{
 					StructType: f.Type(),
@@ -242,22 +234,21 @@ func loadEntity(dst interface{}, src *ole.IDispatch) (errFieldMismatch error) {
 			}
 		case string:
 			iv, err := strconv.ParseInt(val, 10, 64)
-			i := resolveValue(f, isPtr)
-			switch i.Kind() {
+			switch f.Kind() {
 			case reflect.String:
-				i.SetString(val)
+				f.SetString(val)
 			case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 				if err != nil {
 					return err
 				}
-				i.SetInt(iv)
+				f.SetInt(iv)
 			case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 				if err != nil {
 					return err
 				}
-				i.SetUint(uint64(iv))
+				f.SetUint(uint64(iv))
 			case reflect.Struct:
-				switch i.Type() {
+				switch f.Type() {
 				case timeType:
 					if len(val) == 25 {
 						mins, err := strconv.Atoi(val[22:])
@@ -270,14 +261,13 @@ func loadEntity(dst interface{}, src *ole.IDispatch) (errFieldMismatch error) {
 					if err != nil {
 						return err
 					}
-					i.Set(reflect.ValueOf(t))
+					f.Set(reflect.ValueOf(t))
 				}
 			}
 		case bool:
-			i := resolveValue(f, isPtr)
-			switch i.Kind() {
+			switch f.Kind() {
 			case reflect.Bool:
-				i.SetBool(val)
+				f.SetBool(val)
 			default:
 				return &ErrFieldMismatch{
 					StructType: f.Type(),
@@ -288,7 +278,6 @@ func loadEntity(dst interface{}, src *ole.IDispatch) (errFieldMismatch error) {
 		default:
 			typeof := reflect.TypeOf(val)
 			if isPtr && typeof == nil {
-				f.Set(reflect.Zero(f.Type()))
 				break
 			}
 			return &ErrFieldMismatch{
